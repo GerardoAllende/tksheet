@@ -36,6 +36,7 @@ class Sheet(tk.Frame):
                  default_header = "letters", #letters, numbers or both
                  default_row_index = "numbers", #letters, numbers or both
                  page_up_down_select_row = True,
+                 enable_edit_cell_auto_resize = True,
                  data_reference = None,
                  data = None,
                  startup_select = None,
@@ -50,6 +51,7 @@ class Sheet(tk.Frame):
                  max_row_width = "inf",
                  row_index = None,
                  measure_subset_index = True,
+                 after_redraw_time_ms = 100,
                  row_index_width = 100,
                  auto_resize_default_row_index = True,
                  set_all_heights_and_widths = False,
@@ -73,7 +75,7 @@ class Sheet(tk.Frame):
                  show_horizontal_grid = True,
                  display_selected_fg_over_highlights = False,
                  show_selected_cells_border = True,
-                 theme = "light blue",
+                 theme                              = "light blue",
                  popup_menu_fg                      = "gray2",
                  popup_menu_bg                      = "#f2f2f2",
                  popup_menu_highlight_bg            = "#91c9f7",
@@ -101,6 +103,7 @@ class Sheet(tk.Frame):
                  index_selected_cells_fg            = theme_light_blue['index_selected_cells_fg'],
                  index_selected_rows_bg             = theme_light_blue['index_selected_rows_bg'],
                  index_selected_rows_fg             = theme_light_blue['index_selected_rows_fg'],
+                 index_hidden_rows_expander_bg      = theme_light_blue['index_hidden_rows_expander_bg'],
                  header_bg                          = theme_light_blue['header_bg'],
                  header_border_fg                   = theme_light_blue['header_border_fg'],
                  header_grid_fg                     = theme_light_blue['header_grid_fg'],
@@ -109,6 +112,7 @@ class Sheet(tk.Frame):
                  header_selected_cells_fg           = theme_light_blue['header_selected_cells_fg'],
                  header_selected_columns_bg         = theme_light_blue['header_selected_columns_bg'],
                  header_selected_columns_fg         = theme_light_blue['header_selected_columns_fg'],
+                 header_hidden_columns_expander_bg  = theme_light_blue['header_hidden_columns_expander_bg'],
                  top_left_bg                        = theme_light_blue['top_left_bg'],
                  top_left_fg                        = theme_light_blue['top_left_fg'],
                  top_left_fg_highlight              = theme_light_blue['top_left_fg_highlight']):
@@ -118,6 +122,8 @@ class Sheet(tk.Frame):
                           highlightthickness = outline_thickness,
                           highlightbackground = outline_color)
         self.C = parent
+        self.after_redraw_id = None
+        self.after_redraw_time_ms = after_redraw_time_ms
         if width is not None and height is not None:
             self.grid_propagate(0)
         if width is not None:
@@ -139,6 +145,7 @@ class Sheet(tk.Frame):
                            index_selected_cells_fg = index_selected_cells_fg,
                            index_selected_rows_bg = index_selected_rows_bg,
                            index_selected_rows_fg = index_selected_rows_fg,
+                           index_hidden_rows_expander_bg = index_hidden_rows_expander_bg,
                            drag_and_drop_bg = drag_and_drop_bg,
                            resizing_line_fg = resizing_line_fg,
                            row_drag_and_drop_perform = row_drag_and_drop_perform,
@@ -158,11 +165,13 @@ class Sheet(tk.Frame):
                                 header_selected_cells_fg = header_selected_cells_fg,
                                 header_selected_columns_bg = header_selected_columns_bg,
                                 header_selected_columns_fg = header_selected_columns_fg,
+                                header_hidden_columns_expander_bg = header_hidden_columns_expander_bg,
                                 drag_and_drop_bg = drag_and_drop_bg,
                                 column_drag_and_drop_perform = column_drag_and_drop_perform,
                                 measure_subset_header = measure_subset_header,
                                 resizing_line_fg = resizing_line_fg)
         self.MT = MainTable(self,
+                            enable_edit_cell_auto_resize = enable_edit_cell_auto_resize,
                             page_up_down_select_row = page_up_down_select_row,
                             display_selected_fg_over_highlights = display_selected_fg_over_highlights,
                             show_vertical_grid = show_vertical_grid,
@@ -236,8 +245,9 @@ class Sheet(tk.Frame):
                     self.set_options(**{k: v})
         if set_all_heights_and_widths:
             self.set_all_cell_sizes_to_text()
-        self.refresh()
         self.MT.update()
+        self.update()
+        self.refresh()
         if startup_select is not None:
             try:
                 if startup_select[-1] == "cells":
@@ -780,20 +790,22 @@ class Sheet(tk.Frame):
 
     def delete_dropdown(self, r = 0, c = 0):
         if r == "all":
-            for k in tuple(self.MT.dropdowns):
-                self.MT.destroy_dropdown(k[0], k[1])
+            for r, c in self.MT.cell_options:
+                if 'dropdown' in self.MT.cell_options[(r, c)]:
+                    self.MT.destroy_dropdown(r, c)
         else:
             self.MT.destroy_dropdown(r, c)
 
     def get_dropdowns(self):
-        return self.MT.dropdowns
+        return {k: v['dropdown'] for k, v in self.MT.cell_options if 'dropdown' in v}
 
-    def resize_dropdowns(self, dropdowns = []):
-        self.MT.resize_dropdowns(dropdowns = dropdowns)
+    def refresh_dropdowns(self, dropdowns = []):
+        self.MT.refresh_dropdowns(dropdowns = dropdowns)
 
     def set_all_dropdown_values_to_sheet(self):
-        for r, c in self.MT.dropdowns:
-            self.MT.dropdowns[(r, c)]['widget'].set_displayed(self.MT.data_ref[r][c if self.MT.all_columns_displayed else self.MT.displayed_columns[c]])
+        for r, c in self.MT.cell_options:
+            if 'dropdown' in self.MT.cell_options[(r, c)]:
+                self.MT.cell_options[(r, c)]['dropdown'][0].set_displayed(self.MT.data_ref[r][c if self.MT.all_columns_displayed else self.MT.displayed_columns[c]])
 
     def cut(self, event = None):
         self.MT.ctrl_x()
@@ -820,14 +832,14 @@ class Sheet(tk.Frame):
         self.MT.del_row_position(idx = idx,
                                  deselect_all = deselect_all,
                                  preserve_other_selections = preserve_other_selections)
-        self.MT.highlighted_cells = {t1: t2 for t1, t2 in self.MT.highlighted_cells.items() if t1[0] != idx}
-        if idx in self.MT.highlighted_rows:
-            del self.MT.highlighted_rows[idx]
-        if idx in self.RI.highlighted_cells:
-            del self.RI.highlighted_cells[idx]
-        self.MT.highlighted_cells = {(rn if rn < idx else rn - 1, cn): t2 for (rn, cn), t2 in self.MT.highlighted_cells.items()}
-        self.MT.highlighted_rows = {rn if rn < idx else rn - 1: t for rn, t in self.MT.highlighted_rows.items()}
-        self.RI.highlighted_cells = {rn if rn < idx else rn - 1: t for rn, t in self.RI.highlighted_cells.items()}
+        self.MT.cell_options = {t1: t2 for t1, t2 in self.MT.cell_options.items() if t1[0] != idx}
+        if idx in self.MT.row_options:
+            del self.MT.row_options[idx]
+        if idx in self.RI.cell_options:
+            del self.RI.cell_options[idx]
+        self.MT.cell_options = {(rn if rn < idx else rn - 1, cn): t2 for (rn, cn), t2 in self.MT.cell_options.items()}
+        self.MT.row_options = {rn if rn < idx else rn - 1: t for rn, t in self.MT.row_options.items()}
+        self.RI.cell_options = {rn if rn < idx else rn - 1: t for rn, t in self.RI.cell_options.items()}
 
     def insert_row_position(self, idx = "end", height = None, deselect_all = False, preserve_other_selections = False, redraw = False):
         self.MT.insert_row_position(idx = idx,
@@ -898,33 +910,33 @@ class Sheet(tk.Frame):
     def move_row(self, row, moveto):
         self.MT.move_row_position(row, moveto)
         self.MT.data_ref.insert(moveto, self.MT.data_ref.pop(row))
-        popped_ri_highlights = {t1: t2 for t1, t2 in self.RI.highlighted_cells.items() if t1 == row}
-        popped_cell_highlights = {t1: t2 for t1, t2 in self.MT.highlighted_cells.items() if t1[0] == row}
-        popped_row_highlights = {t1: t2 for t1, t2 in self.MT.highlighted_rows.items() if t1 == row}
+        popped_ri = {t1: t2 for t1, t2 in self.RI.cell_options.items() if t1 == row}
+        popped_cell = {t1: t2 for t1, t2 in self.MT.cell_options.items() if t1[0] == row}
+        popped_row = {t1: t2 for t1, t2 in self.MT.row_options.items() if t1 == row}
         
-        popped_ri_highlights = {t1: self.RI.highlighted_cells.pop(t1) for t1 in popped_ri_highlights}
-        popped_cell_highlights = {t1: self.MT.highlighted_cells.pop(t1) for t1 in popped_cell_highlights}
-        popped_row_highlights = {t1: self.MT.highlighted_rows.pop(t1) for t1 in popped_row_highlights}
+        popped_ri = {t1: self.RI.cell_options.pop(t1) for t1 in popped_ri}
+        popped_cell = {t1: self.MT.cell_options.pop(t1) for t1 in popped_cell}
+        popped_row = {t1: self.MT.row_options.pop(t1) for t1 in popped_row}
 
-        self.RI.highlighted_cells = {t1 if t1 < row else t1 - 1: t2 for t1, t2 in self.RI.highlighted_cells.items()}
-        self.RI.highlighted_cells = {t1 if t1 < moveto else t1 + 1: t2 for t1, t2 in self.RI.highlighted_cells.items()}
+        self.RI.cell_options = {t1 if t1 < row else t1 - 1: t2 for t1, t2 in self.RI.cell_options.items()}
+        self.RI.cell_options = {t1 if t1 < moveto else t1 + 1: t2 for t1, t2 in self.RI.cell_options.items()}
 
-        self.MT.highlighted_rows = {t1 if t1 < row else t1 - 1: t2 for t1, t2 in self.MT.highlighted_rows.items()}
-        self.MT.highlighted_rows = {t1 if t1 < moveto else t1 + 1: t2 for t1, t2 in self.MT.highlighted_rows.items()}
+        self.MT.row_options = {t1 if t1 < row else t1 - 1: t2 for t1, t2 in self.MT.row_options.items()}
+        self.MT.row_options = {t1 if t1 < moveto else t1 + 1: t2 for t1, t2 in self.MT.row_options.items()}
 
-        self.MT.highlighted_cells = {(t10 if t10 < row else t10 - 1, t11): t2 for (t10, t11), t2 in self.MT.highlighted_cells.items()}
-        self.MT.highlighted_cells = {(t10 if t10 < moveto else t10 + 1, t11): t2 for (t10, t11), t2 in self.MT.highlighted_cells.items()}
+        self.MT.cell_options = {(t10 if t10 < row else t10 - 1, t11): t2 for (t10, t11), t2 in self.MT.cell_options.items()}
+        self.MT.cell_options = {(t10 if t10 < moveto else t10 + 1, t11): t2 for (t10, t11), t2 in self.MT.cell_options.items()}
 
-        if popped_ri_highlights:
-            self.RI.highlighted_cells[moveto] = popped_ri_highlights[row]
+        if popped_ri:
+            self.RI.cell_options[moveto] = popped_ri[row]
 
-        if popped_row_highlights:
-            self.MT.highlighted_rows[moveto] = popped_row_highlights[row]
+        if popped_row:
+            self.MT.row_options[moveto] = popped_row[row]
 
-        if popped_cell_highlights:
+        if popped_cell:
             newrowsdct = {row: moveto}
-            for (t10, t11), t2 in popped_cell_highlights.items():
-                self.MT.highlighted_cells[(newrowsdct[t10], t11)] = t2
+            for (t10, t11), t2 in popped_cell.items():
+                self.MT.cell_options[(newrowsdct[t10], t11)] = t2
 
     def delete_column_position(self, idx, deselect_all = False, preserve_other_selections = False):
         self.MT.del_col_position(idx,
@@ -937,14 +949,14 @@ class Sheet(tk.Frame):
         self.MT.del_col_position(idx,
                                  deselect_all = deselect_all,
                                  preserve_other_selections = preserve_other_selections)
-        self.MT.highlighted_cells = {t1: t2 for t1, t2 in self.MT.highlighted_cells.items() if t1[1] != idx}
-        if idx in self.MT.highlighted_cols:
-            del self.MT.highlighted_cols[idx]
-        if idx in self.CH.highlighted_cells:
-            del self.CH.highlighted_cells[idx]
-        self.MT.highlighted_cells = {(rn, cn if cn < idx else cn - 1): t2 for (rn, cn), t2 in self.MT.highlighted_cells.items()}
-        self.MT.highlighted_cols = {cn if cn < idx else cn - 1: t for cn, t in self.MT.highlighted_cols.items()}
-        self.CH.highlighted_cells = {cn if cn < idx else cn - 1: t for cn, t in self.CH.highlighted_cells.items()}
+        self.MT.cell_options = {t1: t2 for t1, t2 in self.MT.cell_options.items() if t1[1] != idx}
+        if idx in self.MT.col_options:
+            del self.MT.col_options[idx]
+        if idx in self.CH.cell_options:
+            del self.CH.cell_options[idx]
+        self.MT.cell_options = {(rn, cn if cn < idx else cn - 1): t2 for (rn, cn), t2 in self.MT.cell_options.items()}
+        self.MT.col_options = {cn if cn < idx else cn - 1: t for cn, t in self.MT.col_options.items()}
+        self.CH.cell_options = {cn if cn < idx else cn - 1: t for cn, t in self.CH.cell_options.items()}
 
     def insert_column_position(self, idx = "end", width = None, deselect_all = False, preserve_other_selections = False, redraw = False):
         self.MT.insert_col_position(idx = idx,
@@ -969,33 +981,33 @@ class Sheet(tk.Frame):
         self.MT.move_col_position(column, moveto)
         for rn in range(len(self.MT.data_ref)):
             self.MT.data_ref[rn].insert(moveto, self.MT.data_ref[rn].pop(column))
-        popped_ch_highlights = {t1: t2 for t1, t2 in self.CH.highlighted_cells.items() if t1 == column}
-        popped_cell_highlights = {t1: t2 for t1, t2 in self.MT.highlighted_cells.items() if t1[1] == column}
-        popped_col_highlights = {t1: t2 for t1, t2 in self.MT.highlighted_cols.items() if t1 == column}
+        popped_ch = {t1: t2 for t1, t2 in self.CH.cell_options.items() if t1 == column}
+        popped_cell = {t1: t2 for t1, t2 in self.MT.cell_options.items() if t1[1] == column}
+        popped_col = {t1: t2 for t1, t2 in self.MT.col_options.items() if t1 == column}
         
-        popped_ch_highlights = {t1: self.CH.highlighted_cells.pop(t1) for t1 in popped_ch_highlights}
-        popped_cell_highlights = {t1: self.MT.highlighted_cells.pop(t1) for t1 in popped_cell_highlights}
-        popped_col_highlights = {t1: self.MT.highlighted_cols.pop(t1) for t1 in popped_col_highlights}
+        popped_ch = {t1: self.CH.cell_options.pop(t1) for t1 in popped_ch}
+        popped_cell = {t1: self.MT.cell_options.pop(t1) for t1 in popped_cell}
+        popped_col = {t1: self.MT.col_options.pop(t1) for t1 in popped_col}
 
-        self.CH.highlighted_cells = {t1 if t1 < column else t1 - 1: t2 for t1, t2 in self.CH.highlighted_cells.items()}
-        self.CH.highlighted_cells = {t1 if t1 < moveto else t1 + 1: t2 for t1, t2 in self.CH.highlighted_cells.items()}
+        self.CH.cell_options = {t1 if t1 < column else t1 - 1: t2 for t1, t2 in self.CH.cell_options.items()}
+        self.CH.cell_options = {t1 if t1 < moveto else t1 + 1: t2 for t1, t2 in self.CH.cell_options.items()}
 
-        self.MT.highlighted_cols = {t1 if t1 < column else t1 - 1: t2 for t1, t2 in self.MT.highlighted_cols.items()}
-        self.MT.highlighted_cols = {t1 if t1 < moveto else t1 + 1: t2 for t1, t2 in self.MT.highlighted_cols.items()}
+        self.MT.col_options = {t1 if t1 < column else t1 - 1: t2 for t1, t2 in self.MT.col_options.items()}
+        self.MT.col_options = {t1 if t1 < moveto else t1 + 1: t2 for t1, t2 in self.MT.col_options.items()}
 
-        self.MT.highlighted_cells = {(t10, t11 if t11 < column else t11 - 1): t2 for (t10, t11), t2 in self.MT.highlighted_cells.items()}
-        self.MT.highlighted_cells = {(t10, t11 if t11 < moveto else t11 + 1): t2 for (t10, t11), t2 in self.MT.highlighted_cells.items()}
+        self.MT.cell_options = {(t10, t11 if t11 < column else t11 - 1): t2 for (t10, t11), t2 in self.MT.cell_options.items()}
+        self.MT.cell_options = {(t10, t11 if t11 < moveto else t11 + 1): t2 for (t10, t11), t2 in self.MT.cell_options.items()}
 
-        if popped_ch_highlights:
-            self.CH.highlighted_cells[moveto] = popped_ch_highlights[column]
+        if popped_ch:
+            self.CH.cell_options[moveto] = popped_ch[column]
 
-        if popped_col_highlights:
-            self.MT.highlighted_cols[moveto] = popped_col_highlights[column]
+        if popped_col:
+            self.MT.col_options[moveto] = popped_col[column]
 
-        if popped_cell_highlights:
+        if popped_cell:
             newcolsdct = {column: moveto}
-            for (t10, t11), t2 in popped_cell_highlights.items():
-                self.MT.highlighted_cells[(t10, newcolsdct[t11])] = t2
+            for (t10, t11), t2 in popped_cell.items():
+                self.MT.cell_options[(t10, newcolsdct[t11])] = t2
 
     def create_text_editor(self, row = 0, column = 0, text = None, state = "normal", see = True, set_data_ref_on_destroy = False,
                            binding = None):
@@ -1024,6 +1036,31 @@ class Sheet(tk.Frame):
 
     def destroy_text_editor(self, event = None):
         self.MT.destroy_text_editor(event = event)
+
+    def get_text_editor_widget(self, event = None):
+        try:
+            return self.MT.text_editor.textedit
+        except:
+            return None
+
+    def bind_key_text_editor(self, key, function):
+        self.MT.text_editor_user_bound_keys[key] = function
+
+    def unbind_key_text_editor(self, key):
+        if key == "all":
+            for key in self.MT.text_editor_user_bound_keys:
+                try:
+                    self.MT.text_editor.textedit.unbind(key)
+                except:
+                    pass
+            self.MT.text_editor_user_bound_keys = {}
+        else:
+            if key in self.MT.text_editor_user_bound_keys:
+                del self.MT.text_editor_user_bound_keys[key]
+            try:
+                self.MT.text_editor.textedit.unbind(key)
+            except:
+                pass
 
     def get_xview(self):
         return self.MT.xview()
@@ -1171,6 +1208,48 @@ class Sheet(tk.Frame):
     def all_selected(self):
         return self.MT.all_selected()
 
+    def align_rows(self, rows = [], align = "global", align_index = False, redraw = True): #"center", "w", "e" or "global"
+        self.MT.align_rows(rows = rows,
+                           align = align,
+                           align_index = align_index)
+        if redraw:
+            self.redraw()
+
+    def align_columns(self, columns = [], align = "global", align_header = False, redraw = True): #"center", "w", "e" or "global"
+        self.MT.align_columns(columns = columns,
+                              align = align,
+                              align_header = align_header)
+        if redraw:
+            self.redraw()
+
+    def align_cells(self, row = 0, column = 0, cells = [], align = "global", redraw = True): #"center", "w", "e" or "global"
+        self.MT.align_cells(row = row,
+                            column = column,
+                            cells = cells,
+                            align = align)
+        if redraw:
+            self.redraw()
+
+    def readonly_rows(self, rows = [], readonly = True, redraw = True):
+        self.MT.readonly_rows(rows = rows,
+                              readonly = readonly)
+        if redraw:
+            self.redraw()
+
+    def readonly_columns(self, columns = [], readonly = True, redraw = True):
+        self.MT.readonly_columns(columns = columns,
+                                 readonly = readonly)
+        if redraw:
+            self.redraw()
+
+    def readonly_cells(self, row = 0, column = 0, cells = [], readonly = True, redraw = True):
+        self.MT.readonly_cells(row = row,
+                               column = column,
+                               cells = cells,
+                               readonly = readonly)
+        if redraw:
+            self.redraw()
+
     def highlight_rows(self, rows = [], bg = None, fg = None, highlight_index = True, redraw = False):
         self.MT.highlight_rows(rows = rows,
                                bg = bg,
@@ -1186,11 +1265,25 @@ class Sheet(tk.Frame):
                                   redraw = redraw)
 
     def dehighlight_all(self):
-        self.MT.highlighted_cells = {}
-        self.MT.highlighted_rows = {}
-        self.MT.highlighted_cols = {}
-        self.RI.highlighted_cells = {}
-        self.CH.highlighted_cells = {}
+        for k in self.MT.cell_options:
+            if 'highlight' in self.MT.cell_options[k]:
+                del self.MT.cell_options[k]['highlight']
+                
+        for k in self.MT.row_options:
+            if 'highlight' in self.MT.row_options[k]:
+                del self.MT.row_options[k]['highlight']
+                
+        for k in self.MT.col_options:
+            if 'highlight' in self.MT.col_options[k]:
+                del self.MT.col_options[k]['highlight']
+                
+        for k in self.RI.cell_options:
+            if 'highlight' in self.RI.cell_options[k]:
+                del self.RI.cell_options[k]['highlight']
+                
+        for k in self.CH.cell_options:
+            if 'highlight' in self.CH.cell_options[k]:
+                del self.CH.cell_options[k]['highlight']
 
     def dehighlight_rows(self, rows = [], redraw = False):
         if isinstance(rows, int):
@@ -1198,20 +1291,21 @@ class Sheet(tk.Frame):
         else:
             rows_ = rows
         if not rows_ or rows_ == "all":
-            for r in self.MT.highlighted_rows:
-                try:
-                    del self.RI.highlighted_cells[r]
-                except:
-                    pass
-            self.MT.highlighted_rows = {}
+            for r in self.MT.row_options:
+                if 'highlight' in self.MT.row_options[r]:
+                    del self.MT.row_options[r]['highlight']
+
+            for r in self.RI.cell_options:
+                if 'highlight' in self.RI.cell_options[r]:
+                    del self.RI.cell_options[r]['highlight']
         else:
             for r in rows_:
                 try:
-                    del self.MT.highlighted_rows[r]
+                    del self.MT.row_options[r]['highlight']
                 except:
                     pass
                 try:
-                    del self.RI.highlighted_cells[r]
+                    del self.RI.cell_options[r]['highlight']
                 except:
                     pass
         if redraw:
@@ -1223,20 +1317,21 @@ class Sheet(tk.Frame):
         else:
             columns_ = columns
         if not columns_ or columns_ == "all":
-            for c in self.MT.highlighted_cols:
-                try:
-                    del self.CH.highlighted_cells[c]
-                except:
-                    pass
-            self.MT.highlighted_cols = {}
+            for c in self.MT.col_options:
+                if 'highlight' in self.MT.col_options[c]:
+                    del self.MT.col_options[c]['highlight']
+
+            for c in self.CH.cell_options:
+                if 'highlight' in self.CH.cell_options[c]:
+                    del self.CH.cell_options[c]['highlight']
         else:
             for c in columns_:
                 try:
-                    del self.MT.highlighted_cols[c]
+                    del self.MT.col_options[c]['highlight']
                 except:
                     pass
                 try:
-                    del self.CH.highlighted_cells[c]
+                    del self.CH.cell_options[c]['highlight']
                 except:
                     pass
         if redraw:
@@ -1265,57 +1360,63 @@ class Sheet(tk.Frame):
 
     def dehighlight_cells(self, row = 0, column = 0, cells = [], canvas = "table", all_ = False, redraw = True):
         if row == "all" and canvas == "table":
-            self.MT.highlighted_cells = {}
+            self.MT.cell_options = {}
         elif row == "all" and canvas == "row_index":
-            self.RI.highlighted_cells = {}
+            self.RI.cell_options = {}
         elif row == "all" and canvas == "header":
-            self.CH.highlighted_cells = {}
+            self.CH.cell_options = {}
         if canvas == "table":
             if cells and not all_:
                 for t in cells:
                     try:
-                        del self.MT.highlighted_cells[t]
+                        del self.MT.cell_options[t]['highlight']
                     except:
                         pass
             elif not all_:
-                if (row, column) in self.MT.highlighted_cells:
-                    del self.MT.highlighted_cells[(row, column)]
+                if (row, column) in self.MT.cell_options and 'highlight' in self.MT.cell_options[(row, column)]:
+                    del self.MT.cell_options[(row, column)]['highlight']
             elif all_:
-                self.MT.highlighted_cells = {}
+                for k in self.MT.cell_options:
+                    if 'highlight' in self.MT.cell_options[k]:
+                        del self.MT.cell_options[k]['highlight']
         elif canvas == "row_index":
             if cells and not all_:
                 for r in cells:
                     try:
-                        del self.RI.highlighted_cells[r]
+                        del self.RI.cell_options[r]['highlight']
                     except:
                         pass
             elif not all_:
-                if row in self.RI.highlighted_cells:
-                    del self.RI.highlighted_cells[row]
+                if row in self.RI.cell_options and 'highlight' in self.RI.cell_options[row]:
+                    del self.RI.cell_options[row]['highlight']
             elif all_:
-                self.RI.highlighted_cells = {}
+                for r in self.RI.cell_options:
+                    if 'highlight' in self.RI.cell_options[r]:
+                        del self.RI.cell_options[r]['highlight']
         elif canvas == "header":
             if cells and not all_:
                 for c in cells:
                     try:
-                        del self.CH.highlighted_cells[c]
+                        del self.CH.cell_options[c]['highlight']
                     except:
                         pass
             elif not all_:
-                if column in self.CH.highlighted_cells:
-                    del self.CH.highlighted_cells[column]
+                if column in self.CH.cell_options and 'highlight' in self.CH.cell_options[column]:
+                    del self.CH.cell_options[column]['highlight']
             elif all_:
-                self.CH.highlighted_cells = {}
+                for c in self.CH.cell_options:
+                    if 'highlight' in self.CH.cell_options[c]:
+                        del self.CH.cell_options[c]['highlight']
         if redraw:
             self.refresh(True, True)
 
-    def get_highlighted_cells(self, canvas = "table"):
+    def get_cell_options(self, canvas = "table"):
         if canvas == "table":
-            return self.MT.highlighted_cells
+            return self.MT.cell_options
         elif canvas == "row_index":
-            return self.RI.highlighted_cells
+            return self.RI.cell_options
         elif canvas == "header":
-            return self.CH.highlighted_cells
+            return self.CH.cell_options
         
     def get_frame_y(self, y):
         return y + self.CH.current_height
@@ -1326,10 +1427,10 @@ class Sheet(tk.Frame):
     def align(self, align = None, redraw = True):
         if align is None:
             return self.MT.align
-        elif align in ("w", "center"):
+        elif align in ("w", "center", "e"):
             self.MT.align = align
         else:
-            raise ValueError("Align must be either 'w' or 'center'")
+            raise ValueError("Align must be either 'w' or 'center' or 'e'")
         if redraw:
             self.refresh()
 
@@ -1353,13 +1454,14 @@ class Sheet(tk.Frame):
         if redraw:
             self.refresh()
 
-    def font(self, newfont = None):
-        self.MT.font(newfont)
+    def font(self, newfont = None, reset_row_positions = True):
+        self.MT.font(newfont, reset_row_positions = reset_row_positions)
 
     def header_font(self, newfont = None):
         self.MT.header_font(newfont)
 
     def set_options(self,
+                    enable_edit_cell_auto_resize = None,
                     page_up_down_select_row = None,
                     display_selected_fg_over_highlights = None,
                     empty_horizontal = None,
@@ -1386,12 +1488,14 @@ class Sheet(tk.Frame):
                     header_fg = None,
                     header_selected_cells_bg = None,
                     header_selected_cells_fg = None,
+                    header_hidden_columns_expander_bg = None,
                     index_bg = None,
                     index_border_fg = None,
                     index_grid_fg = None,
                     index_fg = None,
                     index_selected_cells_bg = None,
                     index_selected_cells_fg = None,
+                    index_hidden_rows_expander_bg = None,
                     top_left_bg = None,
                     top_left_fg = None,
                     frame_bg = None,
@@ -1425,6 +1529,12 @@ class Sheet(tk.Frame):
                     measure_subset_index = None,
                     measure_subset_header = None,
                     redraw = True):
+        if enable_edit_cell_auto_resize is not None:
+            self.MT.enable_edit_cell_auto_resize = enable_edit_cell_auto_resize
+        if header_hidden_columns_expander_bg is not None:
+            self.CH.header_hidden_columns_expander_bg = header_hidden_columns_expander_bg
+        if index_hidden_rows_expander_bg is not None:
+            self.RI.index_hidden_rows_expander_bg = index_hidden_rows_expander_bg
         if page_up_down_select_row is not None:
             self.MT.page_up_down_select_row = page_up_down_select_row
         if display_selected_fg_over_highlights is not None:
@@ -1679,10 +1789,12 @@ class Sheet(tk.Frame):
                     continue
             return res
 
-    def set_cell_data(self, r, c, value = "", set_copy = True):
+    def set_cell_data(self, r, c, value = "", set_copy = True, redraw = False):
         self.MT.data_ref[r][c] = f"{value}" if set_copy else value
+        if redraw and self.after_redraw_id is None:
+            self.after_redraw_id = self.after(self.after_redraw_time_ms, self.after_redraw)
 
-    def set_column_data(self, c, values = tuple(), add_rows = True):
+    def set_column_data(self, c, values = tuple(), add_rows = True, redraw = False):
         if add_rows:
             maxidx = len(self.MT.data_ref) - 1
             total_cols = None
@@ -1702,12 +1814,23 @@ class Sheet(tk.Frame):
                 if c > len(self.MT.data_ref[rn]) - 1:
                     self.MT.data_ref[rn].extend(list(repeat("", c - len(self.MT.data_ref[rn]))))
                 self.MT.data_ref[rn][c] = v
+        if redraw and self.after_redraw_id is None:
+            self.after_redraw_id = self.after(self.after_redraw_time_ms, self.after_redraw)
 
-    def insert_column(self, values = None, idx = "end", width = None, deselect_all = False, preserve_other_selections = False, add_rows = True, equalize_data_row_lengths = True):
-        self.MT.insert_col_position(idx = idx,
-                                    width = width,
-                                    deselect_all = deselect_all,
-                                    preserve_other_selections = preserve_other_selections)
+    def insert_column(self, values = None, idx = "end", width = None, deselect_all = False, preserve_other_selections = False, add_rows = True, equalize_data_row_lengths = True,
+                      mod_column_positions = True,
+                      redraw = False):
+        if mod_column_positions:
+            self.MT.insert_col_position(idx = idx,
+                                        width = width,
+                                        deselect_all = deselect_all,
+                                        preserve_other_selections = preserve_other_selections)
+            if not self.MT.all_columns_displayed:
+                try:
+                    disp_next = max(self.MT.displayed_columns) + 1
+                except:
+                    disp_next = 0
+                self.MT.displayed_columns.extend(list(range(disp_next, disp_next + 1)))
         if equalize_data_row_lengths:
             old_total = self.MT.equalize_data_row_lengths()
         else:
@@ -1744,15 +1867,20 @@ class Sheet(tk.Frame):
                     if rn > maxidx:
                         break
                     self.MT.data_ref[rn].insert(idx, v)
-        self.MT.highlighted_cells = {(rn, cn if cn < idx else cn + 1): t2 for (rn, cn), t2 in self.MT.highlighted_cells.items()}
-        self.MT.highlighted_cols = {cn if cn < idx else cn + 1: t for cn, t in self.MT.highlighted_cols.items()}
-        self.CH.highlighted_cells = {cn if cn < idx else cn + 1: t for cn, t in self.CH.highlighted_cells.items()}
+        self.MT.cell_options = {(rn, cn if cn < idx else cn + 1): t2 for (rn, cn), t2 in self.MT.cell_options.items()}
+        self.MT.col_options = {cn if cn < idx else cn + 1: t for cn, t in self.MT.col_options.items()}
+        self.CH.cell_options = {cn if cn < idx else cn + 1: t for cn, t in self.CH.cell_options.items()}
+        if redraw and self.after_redraw_id is None:
+            self.after_redraw_id = self.after(self.after_redraw_time_ms, self.after_redraw)
 
-    def insert_columns(self, columns = 1, idx = "end", widths = None, deselect_all = False, preserve_other_selections = False, add_rows = True, equalize_data_row_lengths = True):
-        self.MT.insert_col_positions(idx = idx,
-                                     widths = widths,
-                                     deselect_all = deselect_all,
-                                     preserve_other_selections = preserve_other_selections)
+    def insert_columns(self, columns = 1, idx = "end", widths = None, deselect_all = False, preserve_other_selections = False, add_rows = True, equalize_data_row_lengths = True,
+                       mod_column_positions = True,
+                       redraw = False):
+        if mod_column_positions:
+            self.MT.insert_col_positions(idx = idx,
+                                         widths = columns if isinstance(columns, int) and widths is None else widths,
+                                         deselect_all = deselect_all,
+                                         preserve_other_selections = preserve_other_selections)
         if equalize_data_row_lengths:
             old_total = self.MT.equalize_data_row_lengths()
         else:
@@ -1760,8 +1888,17 @@ class Sheet(tk.Frame):
         if isinstance(columns, int):
             total_rows = self.MT.total_data_rows()
             data = list(repeat(list(repeat("", total_rows)), columns))
+            numcols = columns
         else:
             data = columns
+            numcols = len(columns)
+        if mod_column_positions:
+            if not self.MT.all_columns_displayed:
+                try:
+                    disp_next = max(self.MT.displayed_columns) + 1
+                except:
+                    disp_next = 0
+                self.MT.displayed_columns.extend(list(range(disp_next, disp_next + numcols)))
         maxidx = len(self.MT.data_ref) - 1
         if add_rows:
             height = self.MT.default_rh[1]
@@ -1795,11 +1932,13 @@ class Sheet(tk.Frame):
                             break
                         self.MT.data_ref[rn].insert(idx, v)
         num_add = len(data)
-        self.MT.highlighted_cells = {(rn, cn if cn < idx else cn + num_add): t2 for (rn, cn), t2 in self.MT.highlighted_cells.items()}
-        self.MT.highlighted_cols = {cn if cn < idx else cn + num_add: t for cn, t in self.MT.highlighted_cols.items()}
-        self.CH.highlighted_cells = {cn if cn < idx else cn + num_add: t for cn, t in self.CH.highlighted_cells.items()}
+        self.MT.cell_options = {(rn, cn if cn < idx else cn + num_add): t2 for (rn, cn), t2 in self.MT.cell_options.items()}
+        self.MT.col_options = {cn if cn < idx else cn + num_add: t for cn, t in self.MT.col_options.items()}
+        self.CH.cell_options = {cn if cn < idx else cn + num_add: t for cn, t in self.CH.cell_options.items()}
+        if redraw and self.after_redraw_id is None:
+            self.after_redraw_id = self.after(self.after_redraw_time_ms, self.after_redraw)
 
-    def set_row_data(self, r, values = tuple(), add_columns = True):
+    def set_row_data(self, r, values = tuple(), add_columns = True, redraw = False):
         if len(self.MT.data_ref) - 1 < r:
             raise Exception("Row number is out of range")
         maxidx = len(self.MT.data_ref[r]) - 1
@@ -1817,8 +1956,11 @@ class Sheet(tk.Frame):
                     self.MT.data_ref[r].append(v)
                 else:
                     self.MT.data_ref[r][c] = v
+        if redraw and self.after_redraw_id is None:
+            self.after_redraw_id = self.after(self.after_redraw_time_ms, self.after_redraw)
 
-    def insert_row(self, values = None, idx = "end", height = None, deselect_all = False, preserve_other_selections = False, add_columns = True):
+    def insert_row(self, values = None, idx = "end", height = None, deselect_all = False, preserve_other_selections = False, add_columns = True,
+                   redraw = False):
         self.MT.insert_row_position(idx = idx,
                                     height = height,
                                     deselect_all = deselect_all,
@@ -1847,15 +1989,14 @@ class Sheet(tk.Frame):
             self.MT.data_ref.append(data)
         else:
             self.MT.data_ref.insert(idx, data)
-            self.MT.highlighted_cells = {(rn if rn < idx else rn + 1, cn): t2 for (rn, cn), t2 in self.MT.highlighted_cells.items()}
-            self.MT.highlighted_rows = {rn if rn < idx else rn + 1: t for rn, t in self.MT.highlighted_rows.items()}
-            self.RI.highlighted_cells = {rn if rn < idx else rn + 1: t for rn, t in self.RI.highlighted_cells.items()}
+            self.MT.cell_options = {(rn if rn < idx else rn + 1, cn): t2 for (rn, cn), t2 in self.MT.cell_options.items()}
+            self.MT.row_options = {rn if rn < idx else rn + 1: t for rn, t in self.MT.row_options.items()}
+            self.RI.cell_options = {rn if rn < idx else rn + 1: t for rn, t in self.RI.cell_options.items()}
+        if redraw and self.after_redraw_id is None:
+            self.after_redraw_id = self.after(self.after_redraw_time_ms, self.after_redraw)
 
-    def insert_rows(self, rows = 1, idx = "end", heights = None, deselect_all = False, preserve_other_selections = False, add_columns = True):
-        self.MT.insert_row_positions(idx = idx,
-                                     heights = heights,
-                                     deselect_all = deselect_all,
-                                     preserve_other_selections = preserve_other_selections)
+    def insert_rows(self, rows = 1, idx = "end", heights = None, deselect_all = False, preserve_other_selections = False, add_columns = True,
+                    redraw = False):
         total_cols = None
         if isinstance(rows, int):
             total_cols = self.MT.total_data_cols()
@@ -1864,6 +2005,14 @@ class Sheet(tk.Frame):
             data = rows
         else:
             data = list(rows)
+        if heights is None:
+            heights_ = len(data)
+        else:
+            heights_ = heights
+        self.MT.insert_row_positions(idx = idx,
+                                     heights = heights_,
+                                     deselect_all = deselect_all,
+                                     preserve_other_selections = preserve_other_selections)
         if add_columns:
             if total_cols is None:
                 total_cols = self.MT.total_data_cols()
@@ -1882,9 +2031,11 @@ class Sheet(tk.Frame):
         else:
             self.MT.data_ref[idx:idx] = data
             num_add = len(data)
-            self.MT.highlighted_cells = {(rn if rn < idx else rn + num_add, cn): t2 for (rn, cn), t2 in self.MT.highlighted_cells.items()}
-            self.MT.highlighted_rows = {rn if rn < idx else rn + num_add: t for rn, t in self.MT.highlighted_rows.items()}
-            self.RI.highlighted_cells = {rn if rn < idx else rn + num_add: t for rn, t in self.RI.highlighted_cells.items()}
+            self.MT.cell_options = {(rn if rn < idx else rn + num_add, cn): t2 for (rn, cn), t2 in self.MT.cell_options.items()}
+            self.MT.row_options = {rn if rn < idx else rn + num_add: t for rn, t in self.MT.row_options.items()}
+            self.RI.cell_options = {rn if rn < idx else rn + num_add: t for rn, t in self.RI.cell_options.items()}
+        if redraw and self.after_redraw_id is None:
+            self.after_redraw_id = self.after(self.after_redraw_time_ms, self.after_redraw)
 
     def sheet_data_dimensions(self, total_rows = None, total_columns = None):
         self.MT.data_dimensions(total_rows, total_columns)
@@ -1895,14 +2046,14 @@ class Sheet(tk.Frame):
     def equalize_data_row_lengths(self):
         return self.MT.equalize_data_row_lengths()
                     
-    def display_subset_of_columns(self,
-                                  indexes = None,
-                                  enable = None,
-                                  reset_col_positions = True,
-                                  set_col_positions = True,
-                                  refresh = False,
-                                  redraw = False,
-                                  deselect_all = True):
+    def displayed_columns(self,
+                          indexes = None,
+                          enable = None,
+                          reset_col_positions = True,
+                          set_col_positions = True,
+                          refresh = False,
+                          redraw = False,
+                          deselect_all = True):
         res = self.MT.display_columns(indexes = indexes,
                                       enable = enable,
                                       reset_col_positions = reset_col_positions,
@@ -1911,23 +2062,12 @@ class Sheet(tk.Frame):
         if refresh or redraw:
             self.refresh()
         return res
+                    
+    def display_subset_of_columns(self, indexes = None, enable = None, reset_col_positions = True, set_col_positions = True, refresh = False, redraw = False, deselect_all = True):
+        return self.displayed_columns(indexes = indexes, enable = enable, reset_col_positions = reset_col_positions, set_col_positions = set_col_positions, refresh = refresh, redraw = redraw, deselect_all = deselect_all)
 
-    def display_columns(self,
-                        indexes = None,
-                        enable = None,
-                        reset_col_positions = True,
-                        set_col_positions = True,
-                        refresh = False,
-                        redraw = False,
-                        deselect_all = True):
-        res = self.MT.display_columns(indexes = indexes,
-                                      enable = enable,
-                                      reset_col_positions = reset_col_positions,
-                                      set_col_positions = set_col_positions,
-                                      deselect_all = deselect_all)
-        if refresh or redraw:
-            self.refresh()
-        return res
+    def display_columns(self, indexes = None, enable = None, reset_col_positions = True, set_col_positions = True, refresh = False, redraw = False, deselect_all = True):
+        return self.displayed_columns(indexes = indexes, enable = enable, reset_col_positions = reset_col_positions, set_col_positions = set_col_positions, refresh = refresh, redraw = redraw, deselect_all = deselect_all)
 
     def show_ctrl_outline(self, canvas = "table", start_cell = (0, 0), end_cell = (1, 1)):
         self.MT.show_ctrl_outline(canvas = canvas, start_cell = start_cell, end_cell = end_cell)
@@ -1946,6 +2086,10 @@ class Sheet(tk.Frame):
 
     def reset_undos(self):
         self.MT.undo_storage = deque(maxlen = self.MT.max_undos)
+
+    def after_redraw(self, redraw_header = True, redraw_row_index = True):
+        self.MT.main_table_redraw_grid_and_text(redraw_header = redraw_header, redraw_row_index = redraw_row_index)
+        self.after_redraw_id = None
 
     def redraw(self, redraw_header = True, redraw_row_index = True):
         self.MT.main_table_redraw_grid_and_text(redraw_header = redraw_header, redraw_row_index = redraw_row_index)

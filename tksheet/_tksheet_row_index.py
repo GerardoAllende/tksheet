@@ -34,6 +34,7 @@ class RowIndex(tk.Canvas):
                  index_selected_rows_bg = "#5f6368",
                  index_selected_rows_fg = "white",
                  default_row_index = "numbers",
+                 index_hidden_rows_expander_bg = None,
                  drag_and_drop_bg = None,
                  resizing_line_fg = None,
                  row_drag_and_drop_perform = True,
@@ -93,11 +94,12 @@ class RowIndex(tk.Canvas):
         self.index_selected_cells_fg = index_selected_cells_fg
         self.index_selected_rows_bg = index_selected_rows_bg
         self.index_selected_rows_fg = index_selected_rows_fg
+        self.index_hidden_rows_expander_bg = index_hidden_rows_expander_bg
         self.index_bg = index_bg
         self.drag_and_drop_bg = drag_and_drop_bg
         self.resizing_line_fg = resizing_line_fg
         self.align = row_index_align
-        self.highlighted_cells = {}
+        self.cell_options = {}
         self.drag_and_drop_enabled = False
         self.dragged_row = None
         self.width_resizing_enabled = False
@@ -115,13 +117,7 @@ class RowIndex(tk.Canvas):
         self.measure_subset_index = measure_subset_index
         self.auto_resize_width = auto_resize_width
         self.default_index = default_row_index.lower()
-        self.bind("<Motion>", self.mouse_motion)
-        self.bind("<ButtonPress-1>", self.b1_press)
-        self.bind("<Shift-ButtonPress-1>",self.shift_b1_press)
-        self.bind("<B1-Motion>", self.b1_motion)
-        self.bind("<ButtonRelease-1>", self.b1_release)
-        self.bind("<Double-Button-1>", self.double_b1)
-        self.bind("<MouseWheel>", self.mousewheel)
+        self.basic_bindings()
 
     def basic_bindings(self, enable = True):
         if enable:
@@ -130,7 +126,6 @@ class RowIndex(tk.Canvas):
             self.bind("<B1-Motion>", self.b1_motion)
             self.bind("<ButtonRelease-1>", self.b1_release)
             self.bind("<Double-Button-1>", self.double_b1)
-            self.bind("<MouseWheel>", self.mousewheel)
             self.bind(get_rc_binding(), self.rc)
         else:
             self.unbind("<Motion>")
@@ -138,19 +133,7 @@ class RowIndex(tk.Canvas):
             self.unbind("<B1-Motion>")
             self.unbind("<ButtonRelease-1>")
             self.unbind("<Double-Button-1>")
-            self.unbind("<MouseWheel>")
             self.unbind(get_rc_binding())
-
-    def mousewheel(self, event = None):
-        if event.num == 5 or event.delta == -120:
-            self.yview_scroll(1, "units")
-            self.MT.yview_scroll(1, "units")
-        if event.num == 4 or event.delta == 120:
-            if self.canvasy(0) <= 0:
-                return
-            self.yview_scroll( - 1, "units")
-            self.MT.yview_scroll( - 1, "units")
-        self.MT.main_table_redraw_grid_and_text(redraw_row_index = True)
 
     def set_width(self, new_width, set_TL = False):
         self.current_width = new_width
@@ -490,7 +473,7 @@ class RowIndex(tk.Canvas):
             self.MT.row_positions[self.rsz_h + 1:] = [e + increment for e in islice(self.MT.row_positions, self.rsz_h + 1, len(self.MT.row_positions))]
             self.MT.row_positions[self.rsz_h] = new_row_pos
             self.MT.recreate_all_selection_boxes()
-            self.MT.resize_dropdowns()
+            self.MT.refresh_dropdowns()
             self.MT.main_table_redraw_grid_and_text(redraw_header = True, redraw_row_index = True)
         elif self.width_resizing_enabled and self.rsz_w is not None and self.currently_resizing_width:
             self.currently_resizing_width = False
@@ -578,44 +561,41 @@ class RowIndex(tk.Canvas):
                         new_selected = tuple(range(r_ + 1 - totalrows, r_ + 1))
                         self.MT.create_selected(r_ + 1 - totalrows, 0, r_ + 1, len(self.MT.col_positions) - 1, "rows")
                 self.MT.create_current(int(new_selected[0]), 0, type_ = "row", inside = True)
+                rowset = set(rowsiter)
                 if self.MT.undo_enabled:
                     self.MT.undo_storage.append(zlib.compress(pickle.dumps(("move_rows",
                                                                             min(orig_selected_rows),
                                                                             new_selected[0],
                                                                             new_selected[-1],
-                                                                            self.MT.highlighted_cells,
-                                                                            self.MT.highlighted_rows,
-                                                                            self.highlighted_cells))))
-                rowset = set(rowsiter)
-                popped_ri_highlights = {t1: t2 for t1, t2 in self.highlighted_cells.items() if t1 in rowset}
-                popped_cell_highlights = {t1: t2 for t1, t2 in self.MT.highlighted_cells.items() if t1[0] in rowset}
-                popped_row_highlights = {t1: t2 for t1, t2 in self.MT.highlighted_rows.items() if t1 in rowset}
+                                                                            sorted(orig_selected_rows)))))
+                popped_ri = {t1: t2 for t1, t2 in self.cell_options.items() if t1 in rowset}
+                popped_cell = {t1: t2 for t1, t2 in self.MT.cell_options.items() if t1[0] in rowset}
+                popped_row = {t1: t2 for t1, t2 in self.MT.row_options.items() if t1 in rowset}
                 
-                popped_ri_highlights = {t1: self.highlighted_cells.pop(t1) for t1 in popped_ri_highlights}
-                popped_cell_highlights = {t1: self.MT.highlighted_cells.pop(t1) for t1 in popped_cell_highlights}
-                popped_row_highlights = {t1: self.MT.highlighted_rows.pop(t1) for t1 in popped_row_highlights}
+                popped_ri = {t1: self.cell_options.pop(t1) for t1 in popped_ri}
+                popped_cell = {t1: self.MT.cell_options.pop(t1) for t1 in popped_cell}
+                popped_row = {t1: self.MT.row_options.pop(t1) for t1 in popped_row}
 
-                self.highlighted_cells = {t1 if t1 < rm1start else t1 - totalrows: t2 for t1, t2 in self.highlighted_cells.items()}
-                self.highlighted_cells = {t1 if t1 < r_ else t1 + totalrows: t2 for t1, t2 in self.highlighted_cells.items()}
+                self.cell_options = {t1 if t1 < rm1start else t1 - totalrows: t2 for t1, t2 in self.cell_options.items()}
+                self.cell_options = {t1 if t1 < r_ else t1 + totalrows: t2 for t1, t2 in self.cell_options.items()}
 
-                self.MT.highlighted_rows = {t1 if t1 < rm1start else t1 - totalrows: t2 for t1, t2 in self.MT.highlighted_rows.items()}
-                self.MT.highlighted_rows = {t1 if t1 < r_ else t1 + totalrows: t2 for t1, t2 in self.MT.highlighted_rows.items()}
+                self.MT.row_options = {t1 if t1 < rm1start else t1 - totalrows: t2 for t1, t2 in self.MT.row_options.items()}
+                self.MT.row_options = {t1 if t1 < r_ else t1 + totalrows: t2 for t1, t2 in self.MT.row_options.items()}
 
-                self.MT.highlighted_cells = {(t10 if t10 < rm1start else t10 - totalrows, t11): t2 for (t10, t11), t2 in self.MT.highlighted_cells.items()}
-                self.MT.highlighted_cells = {(t10 if t10 < r_ else t10 + totalrows, t11): t2 for (t10, t11), t2 in self.MT.highlighted_cells.items()}
+                self.MT.cell_options = {(t10 if t10 < rm1start else t10 - totalrows, t11): t2 for (t10, t11), t2 in self.MT.cell_options.items()}
+                self.MT.cell_options = {(t10 if t10 < r_ else t10 + totalrows, t11): t2 for (t10, t11), t2 in self.MT.cell_options.items()}
 
-                if popped_ri_highlights:
-                    for t1, t2 in zip(rowsiter, new_selected):
-                        self.highlighted_cells[t2] = popped_ri_highlights[t1]
+                newrowsdct = {t1: t2 for t1, t2 in zip(rowsiter, new_selected)}
+                for t1, t2 in popped_ri.items():
+                    self.cell_options[newrowsdct[t1]] = t2
 
-                if popped_row_highlights:
-                    for t1, t2 in zip(rowsiter, new_selected):
-                        self.MT.highlighted_rows[t2] = popped_row_highlights[t1]
+                for t1, t2 in popped_row.items():
+                    self.MT.row_options[newrowsdct[t1]] = t2
 
-                if popped_cell_highlights:
-                    newrowsdct = {t1: t2 for t1, t2 in zip(rowsiter, new_selected)}
-                    for (t10, t11), t2 in popped_cell_highlights.items():
-                        self.MT.highlighted_cells[(newrowsdct[t10], t11)] = t2
+                for (t10, t11), t2 in popped_cell.items():
+                    self.MT.cell_options[(newrowsdct[t10], t11)] = t2
+
+                self.MT.refresh_dropdowns()
 
                 self.MT.main_table_redraw_grid_and_text(redraw_header = True, redraw_row_index = True)
                 if self.ri_extra_end_drag_drop_func is not None:
@@ -634,9 +614,14 @@ class RowIndex(tk.Canvas):
         if bg is None and fg is None:
             return
         if cells:
-            self.highlighted_cells.update({r_: (bg, fg)  for r_ in cells})
+            for r_ in cells:
+                if r_ not in self.cell_options:
+                    self.cell_options[r_] = {}
+                self.cell_options[r_]['highlight'] = (bg, fg)
         else:
-            self.highlighted_cells[r] = (bg, fg)
+            if r not in self.cell_options:
+                self.cell_options[r] = {}
+            self.cell_options[r]['highlight'] = (bg, fg)
         if redraw:
             self.MT.main_table_redraw_grid_and_text(False, True)
 
@@ -760,7 +745,7 @@ class RowIndex(tk.Canvas):
             self.MT.row_positions[r_norm] = new_row_pos
             if recreate:
                 self.MT.recreate_all_selection_boxes()
-                self.MT.resize_dropdowns()
+                self.MT.refresh_dropdowns()
 
     def set_width_of_index_to_text(self, recreate = True):
         if not self.MT.my_row_index and isinstance(self.MT.my_row_index, list):
@@ -827,7 +812,7 @@ class RowIndex(tk.Canvas):
             self.MT.row_positions = list(accumulate(chain([0], (height for r in range(len(self.MT.data_ref))))))
         if recreate:
             self.MT.recreate_all_selection_boxes()
-            self.MT.resize_dropdowns()
+            self.MT.refresh_dropdowns()
         
     def GetNumLines(self, cell):
         if isinstance(cell, str):
@@ -862,9 +847,9 @@ class RowIndex(tk.Canvas):
         return False
 
     def redraw_highlight_get_text_fg(self, fr, sr, r, c_2, c_3, selected_rows, selected_cols, actual_selected_rows):
-        if r in self.highlighted_cells and r in actual_selected_rows:
-            if self.highlighted_cells[r][0] is not None:
-                c_1 = self.highlighted_cells[r][0] if self.highlighted_cells[r][0].startswith("#") else Color_Map_[self.highlighted_cells[r][0]]
+        if r in self.cell_options and 'highlight' in self.cell_options[r] and r in actual_selected_rows:
+            if self.cell_options[r]['highlight'][0] is not None:
+                c_1 = self.cell_options[r]['highlight'][0] if self.cell_options[r]['highlight'][0].startswith("#") else Color_Map_[self.cell_options[r]['highlight'][0]]
                 self.redraw_highlight(0,
                                       fr + 1,
                                       self.current_width - 1,
@@ -874,10 +859,10 @@ class RowIndex(tk.Canvas):
                                               f"{int((int(c_1[5:], 16) + int(c_3[5:], 16)) / 2):02X}"),
                                       outline = "",
                                       tag = "s")
-            tf = self.index_selected_rows_fg if self.highlighted_cells[r][1] is None or self.MT.display_selected_fg_over_highlights else self.highlighted_cells[r][1]
-        elif r in self.highlighted_cells and (r in selected_rows or selected_cols):
-            if self.highlighted_cells[r][0] is not None:
-                c_1 = self.highlighted_cells[r][0] if self.highlighted_cells[r][0].startswith("#") else Color_Map_[self.highlighted_cells[r][0]]
+            tf = self.index_selected_rows_fg if self.cell_options[r]['highlight'][1] is None or self.MT.display_selected_fg_over_highlights else self.cell_options[r]['highlight'][1]
+        elif r in self.cell_options and 'highlight' in self.cell_options[r] and (r in selected_rows or selected_cols):
+            if self.cell_options[r]['highlight'][0] is not None:
+                c_1 = self.cell_options[r]['highlight'][0] if self.cell_options[r]['highlight'][0].startswith("#") else Color_Map_[self.cell_options[r]['highlight'][0]]
                 self.redraw_highlight(0,
                                       fr + 1,
                                       self.current_width - 1,
@@ -887,15 +872,15 @@ class RowIndex(tk.Canvas):
                                               f"{int((int(c_1[5:], 16) + int(c_2[5:], 16)) / 2):02X}"),
                                       outline = "",
                                       tag = "s")
-            tf = self.index_selected_cells_fg if self.highlighted_cells[r][1] is None or self.MT.display_selected_fg_over_highlights else self.highlighted_cells[r][1]
+            tf = self.index_selected_cells_fg if self.cell_options[r]['highlight'][1] is None or self.MT.display_selected_fg_over_highlights else self.cell_options[r]['highlight'][1]
         elif r in actual_selected_rows:
             tf = self.index_selected_rows_fg
         elif r in selected_rows or selected_cols:
             tf = self.index_selected_cells_fg
-        elif r in self.highlighted_cells:
-            if self.highlighted_cells[r][0] is not None:
-                self.redraw_highlight(0, fr + 1, self.current_width - 1, sr, fill = self.highlighted_cells[r][0], outline = "", tag = "s")
-            tf = self.index_fg if self.highlighted_cells[r][1] is None else self.highlighted_cells[r][1]
+        elif r in self.cell_options and 'highlight' in self.cell_options[r]:
+            if self.cell_options[r]['highlight'][0] is not None:
+                self.redraw_highlight(0, fr + 1, self.current_width - 1, sr, fill = self.cell_options[r]['highlight'][0], outline = "", tag = "s")
+            tf = self.index_fg if self.cell_options[r]['highlight'][1] is None else self.cell_options[r]['highlight'][1]
         else:
             tf = self.index_fg
         return tf, self.MT.my_font
@@ -969,6 +954,8 @@ class RowIndex(tk.Canvas):
             for r in range(start_row, end_row - 1):
                 fr = self.MT.row_positions[r]
                 sr = self.MT.row_positions[r + 1]
+                if sr - fr < self.MT.txt_h:
+                    continue
                 if sr > sb:
                     sr = sb
                 tf, font = self.redraw_highlight_get_text_fg(fr, sr, r, c_2, c_3, selected_rows, selected_cols, actual_selected_rows)
@@ -976,15 +963,9 @@ class RowIndex(tk.Canvas):
                     continue
                 try:
                     if isinstance(self.MT.my_row_index, int):
-                        if isinstance(self.MT.data_ref[r][self.MT.my_row_index], str):
-                            lns = self.MT.data_ref[r][self.MT.my_row_index].split("\n")
-                        else:
-                            lns = (f"{self.MT.data_ref[r][self.MT.my_row_index]}", )
+                        lns = self.MT.data_ref[r][self.MT.my_row_index].split("\n") if isinstance(self.MT.data_ref[r][self.MT.my_row_index], str) else f"{self.MT.data_ref[r][self.MT.my_row_index]}".split("\n")
                     else:
-                        if isinstance(self.MT.my_row_index[r], str):
-                            lns = self.MT.my_row_index[r].split("\n")
-                        else:
-                            lns = (f"{self.MT.my_row_index[r]}", )
+                        lns = self.MT.my_row_index[r].split("\n") if isinstance(self.MT.my_row_index[r], str) else f"{self.MT.my_row_index[r]}".split("\n")
                 except:
                     if self.default_index == "letters":
                         lns = (num2alpha(r), )
@@ -1042,6 +1023,8 @@ class RowIndex(tk.Canvas):
             for r in range(start_row, end_row - 1):
                 fr = self.MT.row_positions[r]
                 sr = self.MT.row_positions[r + 1]
+                if sr - fr < self.MT.txt_h:
+                    continue
                 if sr > sb:
                     sr = sb
                 tf, font = self.redraw_highlight_get_text_fg(fr, sr, r, c_2, c_3, selected_rows, selected_cols, actual_selected_rows)
@@ -1049,15 +1032,9 @@ class RowIndex(tk.Canvas):
                     continue
                 try:
                     if isinstance(self.MT.my_row_index, int):
-                        if isinstance(self.MT.data_ref[r][self.MT.my_row_index], str):
-                            lns = self.MT.data_ref[r][self.MT.my_row_index].split("\n")
-                        else:
-                            lns = (f"{self.MT.data_ref[r][self.MT.my_row_index]}", )
+                        lns = self.MT.data_ref[r][self.MT.my_row_index].split("\n") if isinstance(self.MT.data_ref[r][self.MT.my_row_index], str) else f"{self.MT.data_ref[r][self.MT.my_row_index]}".split("\n")
                     else:
-                        if isinstance(self.MT.my_row_index[r], str):
-                            lns = self.MT.my_row_index[r].split("\n")
-                        else:
-                            lns = (f"{self.MT.my_row_index[r]}", )
+                        lns = self.MT.my_row_index[r].split("\n") if isinstance(self.MT.my_row_index[r], str) else f"{self.MT.my_row_index[r]}".split("\n")
                 except:
                     if self.default_index == "letters":
                         lns = (num2alpha(r), )

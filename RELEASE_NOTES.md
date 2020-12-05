@@ -1,3 +1,57 @@
+### Version 4.9.96
+ - Fix bug with dragging scrollbar when columns are shorter than window
+ - Add startup argument `after_redraw_time_ms` default is `100`
+
+### Version 4.9.95
+ - Fix bug with `insert_rows()`
+ - Add `redraw` default argument to many functions, default is `False`
+
+### Version 4.9.92 - 4.9.94
+ - Hopefully fix Linux mousewheel
+
+### Version 4.9.91
+ - Fix auto resize issue
+
+### Version 4.9.9
+ - Attempt to fix Linux mousewheel scrolling
+ - Add `enable_edit_cell_auto_resize` option to startup and `set_options` default is `True`
+
+### Version 4.9.8
+ - Fix potential issue with undo and dictionary copying
+ - Fix potential errors when moving/inserting/deleting rows/columns
+ - Add drop down position refresh to delete columns/rows on right click menu
+
+### Version 4.9.7
+ - Various bug fixes and improvements
+ - Add readonly cells/columns/rows
+
+### Version 4.9.6
+ - Fix bugs with `font()` functions
+ - Fix edit cell bug when hiding columns
+
+### Version 4.9.5
+ - Attempt to fix scrolling issues
+
+### Version 4.9.4
+ - Make `display_subset_of_columns()` and other names of the same function always sort the showing columns
+ - Make right click insert columns left shift data columns along
+ - Fix issues with `insert_column()`/`insert_columns()` when hiding columns
+ - Add default arguments `mod_column_positions` to functions `insert_column()`/`insert_columns()` which when set to `False` only changes data, not number of showing columns
+ - Add `"e"` aka right hand side text alignment for main table, have not added to header or index yet
+ - Add functions `align_cells()`, `align_rows()`, `align_columns()`
+
+### Version 4.9.3
+ - Fix paste bug
+ - Fix mac os vertical scroll code
+
+### Version 4.9.2
+ - Add mac OS command c, x, v, z bindings
+ - Make shift - mousewheel horizontal scroll
+
+### Version 4.9.1
+ - Make alt tab windows maintain open cell edit box
+ - Fix bug in `insert_columns()`
+
 ### Version 4.8.9 - 4.9.0
  - Make functions `insert_row()`, `insert_column()`, `delete_row()`, `delete_column()` adjust highlighted cells/rows/columns to maintain correct highlight indexes
  - Built in right click functions now also auto-update highlighted cells/rows/columns

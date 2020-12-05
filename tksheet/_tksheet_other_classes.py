@@ -12,6 +12,7 @@ import tkinter as tk
 import zlib
 # for mac bindings
 from platform import system as get_os
+USER_OS = f"{get_os()}"
 
 
 class TextEditor_(tk.Text):
@@ -79,7 +80,7 @@ class TextEditor_(tk.Text):
                                        activeforeground = self.parent.parent.popup_menu_highlight_fg,
                                        command = self.undo)
         self.bind("<1>", lambda event: self.focus_set())
-        if str(get_os()) == "Darwin":
+        if USER_OS == "Darwin":
             self.bind("<2>", self.rc)
         else:
             self.bind("<3>", self.rc)
@@ -89,23 +90,23 @@ class TextEditor_(tk.Text):
         self.rc_popup_menu.tk_popup(event.x_root, event.y_root)
         
     def select_all(self, event = None):
-        self.event_generate("<Control-a>")
+        self.event_generate("<Command-a>" if is_mac() else "<Control-a>")
         return "break"
     
     def cut(self, event = None):
-        self.event_generate("<Control-x>")
+        self.event_generate("<Command-x>" if is_mac() else "<Control-x>")
         return "break"
     
     def copy(self, event = None):
-        self.event_generate("<Control-c>")
+        self.event_generate("<Command-c>" if is_mac() else "<Control-c>")
         return "break"
     
     def paste(self, event = None):
-        self.event_generate("<Control-v>")
+        self.event_generate("<Command-v>" if is_mac() else "<Control-v>")
         return "break"
 
     def undo(self, event = None):
-        self.event_generate("<Control-z>")
+        self.event_generate("<Command-z>" if is_mac() else "<Control-z>")
         return "break"
 
 
@@ -246,9 +247,15 @@ def get_index_of_gap_in_sorted_integer_seq_reverse(seq, start = 0):
         prevn = n
     return None
 
+def is_mac():
+    if USER_OS == "Darwin":
+        return True
+    else:
+        return False
+
 def get_rc_binding():
-        if f"{get_os()}" == "Darwin":
-            return "<2>"
-        else:
-            return "<3>"
+    if USER_OS == "Darwin":
+        return "<2>"
+    else:
+        return "<3>"
         
